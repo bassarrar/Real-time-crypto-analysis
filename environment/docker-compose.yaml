@@ -21,6 +21,8 @@ services:
       KAFKA_JMX_HOSTNAME: localhost
       KAFKA_LOG_DIRS: '/tmp/kraft-controller-logs'
       CLUSTER_ID: ${CLUSTER_ID}
+    networks:
+      - kafka-network
 
   # -------------------- Broker ----------------------
   broker:
@@ -49,6 +51,8 @@ services:
       KAFKA_JMX_HOSTNAME: localhost
       KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
       CLUSTER_ID: ${CLUSTER_ID}
+    networks:
+      - kafka-network
 
   # --------------- Schema Registry ------------------
   schema-registry:
@@ -60,33 +64,110 @@ services:
     ports:
       - "8081:8081"
     environment:
-      # Tell SR how to reach Kafka running in KRaft mode
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'PLAINTEXT://broker:29092'
-      # Where SR listens for REST calls
       SCHEMA_REGISTRY_LISTENERS: 'http://0.0.0.0:8081'
-      # Explicit host name avoids Docker’s internal canonical‑host snafu
       SCHEMA_REGISTRY_HOST_NAME: 'schema-registry'
-      # Single‑node convenience tweaks
       SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 1
       SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: INFO
+    networks:
+      - kafka-network
 
   # --------------- Control Center -------------------
   control-center:
+    profiles: ["monitoring"]
     image: confluentinc/cp-enterprise-control-center:${TAG}
     hostname: control-center
     container_name: control-center
     depends_on:
       - broker
       - controller
-      - schema-registry          # NEW—wait for SR
+      - schema-registry
     ports:
       - "9021:9021"
     environment:
       CONTROL_CENTER_BOOTSTRAP_SERVERS: broker:29092
-      CONTROL_CENTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081   # NEW
-      # internal/metrics topic settings for one‑broker cluster
+      CONTROL_CENTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       CONTROL_CENTER_REPLICATION_FACTOR: 1
       CONTROL_CENTER_INTERNAL_TOPICS_PARTITIONS: 1
       CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_PARTITIONS: 1
       CONFLUENT_METRICS_TOPIC_REPLICATION: 1
       PORT: 9021
+    networks:
+      - kafka-network
+
+  # --------------- Kafka Producer -------------------
+  kafka-producer:
+    profiles: ["kafka"]
+    build:
+      context: ../kafka_producer
+    container_name: kafka-producer
+    volumes:
+      - ../kafka_producer:/app
+    working_dir: /app
+    depends_on:
+      - broker
+      - schema-registry
+    environment:
+      - SCHEMA_REGISTRY_URL=http://schema-registry:8081
+      - ALPACA_KEY=${ALPACA_KEY}
+      - ALPACA_SECRET=${ALPACA_SECRET}
+      - KAFKA_BOOTSTRAP_SERVERS=broker:29092
+    networks:
+      - kafka-network
+
+  # ---------------- Spark Master --------------------
+  spark-master:
+    profiles: ["spark"]
+    image: bitnami/spark:3.5.1
+    container_name: spark-master
+    hostname: spark-master
+    environment:
+      - SPARK_MODE=master
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    networks:
+      - kafka-network
+
+  # ---------------- Spark Worker --------------------
+  spark-worker:
+    profiles: ["spark"]
+    image: bitnami/spark:3.5.1
+    container_name: spark-worker
+    hostname: spark-worker
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    depends_on:
+      - spark-master
+    networks:
+      - kafka-network
+
+  # ---------------- Spark App -----------------------
+  spark-app:
+    profiles: ["spark"]
+    build:
+      context: ../spark
+    container_name: spark-app
+    volumes:
+      - ../spark:/app
+    depends_on:
+      - spark-master
+      - spark-worker
+      - broker
+    environment:
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - KAFKA_BOOTSTRAP_SERVERS=broker:29092
+      - SCHEMA_REGISTRY_URL=http://schema-registry:8081
+    command: >
+      /opt/bitnami/spark/bin/spark-submit
+      --master spark://spark-master:7077
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.spark:spark-avro_2.12:3.5.1
+      /app/app.py
+    networks:
+      - kafka-network
+
+# ---------------- Networks ---------------------------
+networks:
+  kafka-network:
+    driver: bridge

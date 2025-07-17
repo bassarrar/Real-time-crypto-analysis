@@ -9,8 +9,6 @@ from confluent_kafka.schema_registry.avro import AvroSerializer
 import avro.schema
 
 
-# Loading variables
-load_dotenv(find_dotenv("./environment/.env"))
 
 
 SUBSCRIPTIONS = ["BTC/USD", "ETH/USD","AAVE/USD", "AVAX/USD", "BAT/USD", "BCH/USD", "CRV/USD", "DOGE/USD",
@@ -39,14 +37,14 @@ def build_serializers(schema_path: str, registry_url: str, serializer_conf: dict
     
 def delivery_report(err, msg):
     if err:
-        logging.error(f"  delivery failed: {err}")
+        logging.error(f"delivery failed: {err}")
     else:
-        logging.debug("  delivered to %s [%d] @ offset %d",
+        logging.info(f"delivered to %s [%d] @ offset %d",
                       msg.topic(), msg.partition(), msg.offset())
 
 async def main():
     # kafka config 
-    kafka_conf = {"bootstrap.servers": "localhost:9092",
+    kafka_conf = {"bootstrap.servers": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "broker:29092"),
             "client.id": socket.gethostname(),
             "linger.ms": 20,
             "enable.idempotence": True,
@@ -58,6 +56,8 @@ async def main():
     }
 
     #building serializers
+    print(f"Schema Registry URL: {os.getenv('SCHEMA_REGISTRY_URL')}")
+
     key_ser, avro_ser = build_serializers("./schemas/crypto.avsc", os.getenv("SCHEMA_REGISTRY_URL"), serializer_conf)
     async with kafka_producer(**kafka_conf) as producer:
         async def quote_handler(data):
