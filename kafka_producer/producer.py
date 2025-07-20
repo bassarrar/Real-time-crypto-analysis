@@ -6,6 +6,7 @@ from confluent_kafka import Producer
 from confluent_kafka.serialization import SerializationContext, MessageField, StringSerializer
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroSerializer
+from confluent_kafka.admin import AdminClient, NewTopic
 import avro.schema
 
 
@@ -49,15 +50,25 @@ async def main():
             "linger.ms": 20,
             "enable.idempotence": True,
             "compression.type": "zstd"}
-            
+    
+     # topic setup
+    admin = AdminClient({"bootstrap.servers": kafka_conf["bootstrap.servers"]})
+    topic = NewTopic("crypto", num_partitions=8, replication_factor=1)
+    futures = admin.create_topics([topic])
+
+    for topic_name, future in futures.items():
+        try:
+            future.result()
+            logging.info(f"Topic '{topic_name}' created.")
+        except Exception as e:
+            logging.warning(f"Topic '{topic_name}' may already exist or failed to create: {e}")
+
     # serializer config
     serializer_conf = {
     'auto.register.schemas': True
     }
 
     #building serializers
-    print(f"Schema Registry URL: {os.getenv('SCHEMA_REGISTRY_URL')}")
-
     key_ser, avro_ser = build_serializers("./schemas/crypto.avsc", os.getenv("SCHEMA_REGISTRY_URL"), serializer_conf)
     async with kafka_producer(**kafka_conf) as producer:
         async def quote_handler(data):
@@ -95,8 +106,8 @@ async def main():
             await asyncio.gather(flush_task, return_exceptions=True)
             producer.flush()            # Final blocking flush (guarantees delivery)
        
-
 if __name__ == "__main__":
+    
     logging.basicConfig(level=logging.INFO)
     loop = asyncio.get_event_loop()
     loop.run_until_complete(main())

@@ -1,2 +1,4 @@
 pyspark==3.5.1
-requests==2.31.0
+confluent-kafka[avro,schemaregistry]==2.11.0
+cryptography==41.0.7
+notebook
