@@ -29,6 +29,8 @@ services:
     image: confluentinc/cp-kafka:${TAG}
     hostname: broker
     container_name: broker
+    volumes:
+      - kafka_data:/var/lib/kafka/data
     depends_on:
       - controller
     ports:
@@ -50,7 +52,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_JMX_PORT: 9102
       KAFKA_JMX_HOSTNAME: localhost
-      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
       CLUSTER_ID: ${CLUSTER_ID}
     networks:
       - kafka-network
@@ -70,32 +72,10 @@ services:
       SCHEMA_REGISTRY_HOST_NAME: 'schema-registry'
       SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 1
       SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: INFO
+      SCHEMA_REGISTRY_KAFKASTORE_CONNECTION_TIMEOUT_MS: 60000
+      SCHEMA_REGISTRY_KAFKASTORE_RETRY_BACKOFF_MS: 5000
     networks:
       - kafka-network
-
-  # --------------- Control Center -------------------
-  control-center:
-    profiles: ["monitoring"]
-    image: confluentinc/cp-enterprise-control-center:${TAG}
-    hostname: control-center
-    container_name: control-center
-    depends_on:
-      - broker
-      - controller
-      - schema-registry
-    ports:
-      - "9021:9021"
-    environment:
-      CONTROL_CENTER_BOOTSTRAP_SERVERS: broker:29092
-      CONTROL_CENTER_SCHEMA_REGISTRY_URL: http://schema-registry:8081
-      CONTROL_CENTER_REPLICATION_FACTOR: 1
-      CONTROL_CENTER_INTERNAL_TOPICS_PARTITIONS: 1
-      CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_PARTITIONS: 1
-      CONFLUENT_METRICS_TOPIC_REPLICATION: 1
-      PORT: 9021
-    networks:
-      - kafka-network
-
   # --------------- Kafka Producer -------------------
   kafka-producer:
     profiles: ["kafka"]
@@ -115,59 +95,62 @@ services:
       - KAFKA_BOOTSTRAP_SERVERS=broker:29092
     networks:
       - kafka-network
-
-  # ---------------- Spark Master --------------------
-  spark-master:
-    profiles: ["spark"]
-    image: bitnami/spark:3.5.1
-    container_name: spark-master
-    hostname: spark-master
-    environment:
-      - SPARK_MODE=master
+# -------------------------------- clickHouse ----------------------------
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: clickhouse
+    profiles: ["db"]
     ports:
-      - "7077:7077"
-      - "8080:8080"
-    networks:
-      - kafka-network
-
-  # ---------------- Spark Worker --------------------
-  spark-worker:
-    profiles: ["spark"]
-    image: bitnami/spark:3.5.1
-    container_name: spark-worker
-    hostname: spark-worker
-    environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-    depends_on:
-      - spark-master
-    networks:
-      - kafka-network
-
-  # ---------------- Spark App -----------------------
-  spark-app:
-    profiles: ["spark"]
-    build:
-      context: ../spark
-    container_name: spark-app
+      - "8123:8123"    # HTTP interface
+      - "9000:9000"    # Native TCP interface 
     volumes:
-      - ../spark:/app
-    ports:
-      - "8888:8888"
-    depends_on:
-      - spark-master
-      - spark-worker
-      - broker
+      - ../clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - clickhouse_data:/var/lib/clickhouse
+      - ../clickhouse/config.d/access_control.xml:/etc/clickhouse-server/config.d/access_control.xml  # setting username and password
+      - ../clickhouse/config.d/listen_all.xml:/etc/clickhouse-server/config.d/listen_all.xml # allow comm with containers
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
     environment:
-      - SPARK_MASTER_URL=spark://spark-master:7077
+      - CLICKHOUSE_DB=crypto
+      - CLICKHOUSE_USER=crypto_user
+      - CLICKHOUSE_PASSWORD=password
+    networks:
+    - kafka-network
+
+# --------------------------------- consumer to DB -----------------------
+  consumer:
+    profiles : ['db']
+    build :
+      context: ../consumer
+    container_name: consumer
+    volumes:
+      - ../consumer/:/consumer
+    working_dir: /consumer
+    depends_on:
+      - broker
+      - clickhouse
+    environment:
       - KAFKA_BOOTSTRAP_SERVERS=broker:29092
       - SCHEMA_REGISTRY_URL=http://schema-registry:8081
-    command: >
-      /opt/bitnami/spark/bin/spark-submit
-      --master spark://spark-master:7077
-      /app/app.py
+      - KAFKA_TOPIC=raw_prices
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USERNAME=crypto_user
+      - CLICKHOUSE_PASSWORD=password
+      - CLICKHOUSE_DB=crypto
     networks:
       - kafka-network
+
+
+# ---------------------------------- volumes --------------------
+volumes:
+  clickhouse_data:
+  kafka_data:
+
+
+
 
 # ---------------- Networks ---------------------------
 
