@@ -29,12 +29,6 @@
       "doc": "Size (quantity) available at the bid"
     },
     {
-      "name": "bid_exchange",
-      "type": ["null", "string"],
-      "default": null,
-      "doc": "Exchange code posting the bid (may be absent)"
-    },
-    {
       "name": "ask_price",
       "type": "double",
       "doc": "Best ask price"
@@ -43,24 +37,6 @@
       "name": "ask_size",
       "type": "double",
       "doc": "Size available at the ask"
-    },
-    {
-      "name": "ask_exchange",
-      "type": ["null", "string"],
-      "default": null,
-      "doc": "Exchange code posting the ask (may be absent)"
-    },
-    {
-      "name": "conditions",
-      "type": ["null", { "type": "array", "items": "string" }],
-      "default": null,
-      "doc": "Condition flags (array of strings) or null if none"
-    },
-    {
-      "name": "tape",
-      "type": ["null", "string"],
-      "default": null,
-      "doc": "SIP tape identifier (A, B, or C) if provided"
     }
   ]
 }

@@ -1,0 +1,5 @@
+<clickhouse>
+    <access_control>
+        <use_user_files>false</use_user_files>
+    </access_control>
+</clickhouse>
